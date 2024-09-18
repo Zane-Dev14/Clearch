@@ -1,70 +1,61 @@
-mod llms;
-mod traits;
-use crate::llms::gemini::GeminiModel;
-use crate::traits::LLMRequest;
+// src/main.rs
+use std::process;
 use clap::Parser;
-use clap_stdin::FileOrStdin;
-use dotenv::dotenv;
-use sys_info::{os_release, os_type};
+use sys_info::{linux_os_release, os_release, os_type};
+use llms::gpt::GPT4Model;
 
+mod traits;
+mod llms;
 
 #[derive(Parser)]
-#[command(name = "Clearch")]
-#[command(author = "Advaith Narayanan <advaith@glitchy.systems>")]
-#[command(about = "Search using the command line")]
+#[command(
+name = "Clearch",
+author = "Advaith Narayanan <advaith@glitchy.systems>",
+about = "Search using the command line",
+after_help = "Note: To redirect errors to stdout, use 2>&1.\n\
+Example usages:\n\
+- Provide a search query: clearch -q \"search term\"\n\
+- Redirect errors: clearch -q \"search term\" 2>&1"
+)]
 struct Gemini {
-    
-    #[arg(short='q',long="specify")]
+    #[arg(short = 'q', long = "specify", help = "Specify the search query to perform")]
     search_query: Option<String>,
-    
-    // #[arg(long="query",help = "Pass `-h` and you'll see me!")]
-    query: FileOrStdin<String>,
 }
 
 #[tokio::main]
 async fn main() {
-    dotenv().ok();
+    // Retrieve OS information
+    let os_type = os_type().unwrap_or_else(|_| "Unknown".to_string());
+    let os_release = os_release().unwrap_or_else(|_| "Unknown".to_string());
+    let linux_distro = linux_os_release()
+    .map(|info| info.pretty_name)
+    .unwrap_or(None)
+    .unwrap_or_else(|| "Unknown".to_string());
 
     println!(
-        "OS: {}  OS REL: {} ",
-        os_type().unwrap(),
-        os_release().unwrap(),
+        "OS: {}  OS REL: {} Linux: {}",
+        os_type, os_release, linux_distro
     );
 
+    // Parse command line arguments
     let search = Gemini::parse();
 
-    let apikey = match std::env::var("GEMIAI_API") {
-        Ok(apikey) => apikey,
-        Err(e) => panic!("API not found: {}", e),
-    };
-    
-    let gemini_model = GeminiModel::new(apikey);
+    // Initialize the GPT-4 model with a hardcoded API key
+    let gpt_model = GPT4Model::new();
 
-    if let Some(query) = search.search_query.as_deref() {
+    if let Some(query) = search.search_query {
         println!("Searching for: {}", query);
-        gemini_model.req(query, "").await.unwrap();
-    } else {
-        if let Ok(buffer) = search.query.contents() {
-            println!("{buffer}");
-            let prompt: Vec<String> = include_str!("prompt").split("\n").map(|s| s.to_string()).collect();
-            println!("lenth of array {}",prompt.len());
-            for i in prompt{
-                println!("{}", i);
+
+        // Send the query to GPT-4
+        match gpt_model.req(&query).await {
+            Ok(response) => println!("Response: {}", response),
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                process::exit(1);
             }
-            gemini_model.req(
-                &buffer,
-                format!(
-                    "OS: {}  kernal version: {} use the information and the query provided in the promt to answer as correctly as possible if unsure do not answer but reply the model is unsure about the answer",
-                    os_type().unwrap(),
-                    os_release().unwrap(),
-                
-                )
-                .as_str(),
-            )
-            .await
-            .unwrap();
         }
+    } else {
+        eprintln!("Error: Please provide a search query using -q or --specify.");
+        process::exit(1);
     }
 }
-
-
